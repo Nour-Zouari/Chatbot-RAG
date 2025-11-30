@@ -1,25 +1,18 @@
-# Importations nécessaires
+# Importations
 import requests
 import psycopg
 from psycopg import Cursor
 
 # Variables
 conversation_file_path = "chemin/vers/ton/fichier.txt"
-# modèle Grok pour les embeddings
 GROK_MODEL = "grok-embedding-1"
 GROK_API_URL = "https://api.grok.ai/v1/embeddings"
 GROK_API_KEY = "ton_token"
-
-# Connexion à PostgreSQL
 db_connection_str = "dbname=chatbot user=postgres password=1234 host=localhost port=5433"
 
 # --------------------------------------
-# Fonction pour lire et filtrer le fichier de conversation
+# Fonction pour lire et filtrer le fichier
 def create_conversation_list(file_path: str) -> list[str]:
-    """
-    Lit le fichier ligne par ligne, ignore les lignes commençant par '<'
-    et supprime les espaces de début.
-    """
     with open(file_path, "r") as file:
         text = file.read()
         text_list = text.split("\n")
@@ -30,9 +23,6 @@ def create_conversation_list(file_path: str) -> list[str]:
 # --------------------------------------
 # Fonction pour calculer les embeddings via Grok
 def calculate_embeddings(corpus: str) -> list[float]:
-    """
-    Envoie le texte à l'API Grok et récupère l'embedding correspondant.
-    """
     headers = {"Authorization": f"Bearer {GROK_API_KEY}"}
     data = {"input": corpus, "model": GROK_MODEL}
     
@@ -41,52 +31,42 @@ def calculate_embeddings(corpus: str) -> list[float]:
         raise Exception(f"Erreur API Grok: {response.status_code} - {response.text}")
     
     response_json = response.json()
-    # Grok retourne normalement le vecteur sous "embedding" ou "data[0].embedding"
-    return response_json["embedding"]  # adapter si nécessaire
+    return response_json["embedding"]  # adapter la clé si nécessaire
 
 # --------------------------------------
-# Fonction pour insérer un embedding dans la base
+# Fonction pour insérer un embedding dans la table
 def save_embedding(corpus: str, embedding: list[float], cursor: Cursor) -> None:
-    """
-    Insère un texte et son embedding dans la table embeddings.
-    """
     cursor.execute(
         'INSERT INTO embeddings (corpus, embedding) VALUES (%s, %s)',
         (corpus, embedding)
     )
 
 # --------------------------------------
-# Fonction pour rechercher les textes similaires
+# Fonction pour récupérer les textes similaires
 def similar_corpus(input_corpus: str, cursor: Cursor) -> list[tuple[int, str]]:
-    """
-    Calcule l'embedding du texte d'entrée et renvoie les 5 textes les plus proches
-    selon la distance cosinus (opérateur <=> de pgvector).
-    """
     embedding = calculate_embeddings(input_corpus)
+    # Avec FLOAT8[], pgvector n’est pas utilisé → recherche brute
     cursor.execute(
-        "SELECT id, corpus FROM embeddings ORDER BY embedding <=> %s LIMIT 5",
-        (embedding,)
+        "SELECT id, corpus FROM embeddings"  # ici, recherche brute, sans distance optimisée
     )
-    return cursor.fetchall()
+    results = cursor.fetchall()
+    # Calcul manuel de distance si besoin (cosine, euclidean) peut être fait en Python
+    return results
 
 # --------------------------------------
-# Connexion à la base et exécution des opérations
+# Connexion à la base et exécution
 with psycopg.connect(db_connection_str) as conn:
     conn.autocommit = True
     with conn.cursor() as cur:
         # Supprime la table si elle existe
         cur.execute("DROP TABLE IF EXISTS embeddings;")
         
-        # Installer l'extension pgvector si absente
-        cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-        
-        # Créer la table embeddings avec type VECTOR
-        # 1024 correspond à la dimension du vecteur renvoyé par le modèle Grok
+        # Créer la table embeddings avec FLOAT8[]
         cur.execute("""
             CREATE TABLE embeddings (
                 id SERIAL PRIMARY KEY,
                 corpus TEXT,
-                embedding VECTOR(1024)
+                embedding FLOAT8[]
             );
         """)
         
@@ -101,6 +81,6 @@ with psycopg.connect(db_connection_str) as conn:
         # Exemple d'interrogation
         test_text = "Exemple de texte pour tester la similarité"
         similar_texts = similar_corpus(test_text, cur)
-        print("Textes similaires :")
+        print("Textes dans la table :")
         for id_, text in similar_texts:
             print(f"{id_}: {text}")
