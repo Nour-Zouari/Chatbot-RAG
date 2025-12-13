@@ -11,7 +11,7 @@ from typing import List
 # Nécessaire pour charger les variables du fichier .env
 from dotenv import load_dotenv 
 
-# Charge les variables d'environnement (GEMINI_API_KEY, DB_CONNECTION_STR, etc.)
+# Charge les variables d'environnement
 load_dotenv() 
 
 # ------------------------------
@@ -20,8 +20,8 @@ load_dotenv()
 # Constantes
 EMBEDDING_DIMENSION = 768 # Dimension de sortie pour 'text-embedding-004'
 TOP_K = 5
-# Chemin du fichier unique à traiter pour ce prototype
-SINGLE_FILE_PATH = "data/TRANS_TXT/017_00000012.txt" 
+# MODIFICATION CLÉ: Pointez vers le DOSSIER contenant tous les .txt pour l'indexation
+TXT_FOLDER_PATH = "data/TRANS_TXT" 
 
 # Variables d'environnement chargées via os.getenv
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "text-embedding-004") 
@@ -136,13 +136,7 @@ def build_prompt(similar_texts: List[tuple[int, str]], question: str) -> str:
     return prompt
 
 # ------------------------------
-# FONCTION : APPEL AU LLM (SIMULATION pour ne pas expirer la clé )
-# ------------------------------
-def call_llm(prompt: str) -> str:
-    """Fonction factice pour simuler l'appel à un LLM externe (ici, on montre le prompt RAG)."""
-    return f"[Réponse générée par le LLM, basée sur le prompt RAG suivant]\n---\n{prompt}\n---"
-# ------------------------------
-# NOUVELLE FONCTION : APPEL AU LLM (RÉEL)
+# FONCTION : APPEL AU LLM (RÉEL)
 # ------------------------------
 def generate_response(prompt: str) -> str:
     """Appelle l'API de génération de Gemini pour obtenir la réponse finale."""
@@ -159,17 +153,23 @@ def generate_response(prompt: str) -> str:
     }
 
     try:
-        response = requests.post(GENERATION_URL, json=data, params=params, timeout=15)
+        # NOTE : Timeout augmenté pour la génération qui peut être plus longue
+        response = requests.post(GENERATION_URL, json=data, params=params, timeout=30) 
         response.raise_for_status()
         resp_json = response.json()
         
-        # Extrait le texte généré
-        return resp_json["candidates"][0]["content"]["parts"][0]["text"]
-        
+        # Extrait le texte généré (avec vérification de structure)
+        if resp_json.get("candidates"):
+            return resp_json["candidates"][0]["content"]["parts"][0]["text"]
+        else:
+             # Peut arriver si la réponse est bloquée ou vide
+            return "[RÉPONSE VIDE] Le modèle n'a pas pu générer de réponse (peut-être bloqué par les filtres de sécurité)."
+
     except requests.exceptions.RequestException as e:
         return f"[ERREUR API DE GÉNÉRATION] Réseau ou HTTP: {e}"
     except Exception as e:
         return f"[ERREUR] Impossible de traiter la réponse du LLM: {e}"
+        
 # ------------------------------
 # CONNEXION À LA BASE ET INITIALISATION
 # ------------------------------
@@ -190,17 +190,18 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
             );
         """)
         
-        # AJOUT : Purge des anciennes données pour garantir un test propre sur le fichier unique
+        # Purge des anciennes données pour le nouvel index complet
         print("Purge des anciennes données d'embeddings...")
-        cur.execute("TRUNCATE TABLE embeddings_gemini RESTART IDENTITY;") # Utilise RESTART IDENTITY pour réinitialiser les ID
+        cur.execute("TRUNCATE TABLE embeddings_gemini RESTART IDENTITY;") 
 
         # ------------------------------
-        # TRAITEMENT DU FICHIER UNIQUE
+        # TRAITEMENT DE TOUS LES FICHIERS TXT
         # ------------------------------
         
-        # Utilise le chemin du fichier unique défini plus haut
-        txt_files_to_process = [SINGLE_FILE_PATH] 
+        # MODIFICATION CLÉ : Utilisation de TXT_FOLDER_PATH pour tous les fichiers
+        txt_files_to_process = glob.glob(os.path.join(TXT_FOLDER_PATH, "*.txt"))
         print(f"Début du traitement de {len(txt_files_to_process)} fichier(s)...")
+        print("CETTE ÉTAPE PEUT PRENDRE PLUSIEURS MINUTES EN FONCTION DU NOMBRE DE FICHIERS.")
 
         for conv_id, file_path in enumerate(txt_files_to_process, start=1):
             try:
@@ -209,7 +210,6 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
                 
                 for passage in passages:
                     embedding = calculate_embeddings(passage)
-                    # Vérifie que l'embedding a la taille attendue avant l'insertion
                     if len(embedding) == EMBEDDING_DIMENSION:
                         save_embedding(passage, conv_id, embedding, cur)
                     else:
@@ -222,10 +222,11 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
         # EXEMPLE DE QUESTION ET GENERATION DE REPONSE
         # ------------------------------
         print("\n" + "="*50)
-        print("EXEMPLE DE RECHERCHE RAG")
+        print(f"EXEMPLE DE RECHERCHE RAG (Corpus de {len(txt_files_to_process)} fichiers)")
         print("="*50)
         
-        user_question = "oui bonjour e j'appelle je sais pas si j'appelle au bon endroit e"
+        # Utilisation de la question plus spécifique pour tester la pertinence sur le grand corpus
+        user_question = "bonjour j'aurais souhaité avoir le secrétariat de carrière juridique s'il vous plait"
         print(f"Question Utilisateur: {user_question}")
         
         top_passages = similar_corpus(user_question, cur)
@@ -236,9 +237,12 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
                 print(f" - '{text[:60]}...'")
             
             prompt = build_prompt(top_passages, user_question)
+            
+            # Utilisation de la fonction de génération réelle
+            print("\nAppel de l'API de génération (Gemini)...")
             llm_response = generate_response(prompt) 
-            #llm_response = call_llm(prompt) 
+            
             print("\nRéponse du Chatbot RAG :")
             print(llm_response)
         else:
-            print("Aucun passage similaire trouvé dans la base de données (Vérifiez l'ingestion).")
+            print("Aucun passage similaire trouvé dans la base de données. Assurez-vous que l'indexation a réussi.")
