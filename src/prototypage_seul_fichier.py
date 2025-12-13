@@ -1,24 +1,32 @@
 # ------------------------------
-# IMPORTATIONS
+# IMPORTATIONS ET CONFIGURATION DOTENV
 # ------------------------------
 import os
 import glob
 import requests
 import psycopg
-from psycopg import Cursor
 import numpy as np
+from psycopg import Cursor
 from typing import List
+# Nécessaire pour charger les variables du fichier .env
+from dotenv import load_dotenv 
+
+# Charge les variables d'environnement (GEMINI_API_KEY, DB_CONNECTION_STR, etc.)
+load_dotenv() 
 
 # ------------------------------
 # CONSTANTES ET VARIABLES D'ENVIRONNEMENT
 # ------------------------------
 # Constantes
-EMBEDDING_DIMENSION = 768 # Taille des embeddings pour le modèle gemini-embedding-1
+EMBEDDING_DIMENSION = 768 # Dimension de sortie pour 'text-embedding-004'
 TOP_K = 5
-TXT_FOLDER_PATH="data/TRANS_TXT/"
+# Chemin du fichier unique à traiter pour ce prototype
+SINGLE_FILE_PATH = "data/TRANS_TXT/017_00000012.txt" 
+
+# Variables d'environnement chargées via os.getenv
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "text-embedding-004") 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Clé chargée de manière sécurisée
-GEMINI_API_KEY="AIzaSyDIRQF9conyGaYA5EAx9AmWLJPUzwHQEKE" # test
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Lecture de la clé depuis l'environnement (ex: .env)
+GEMINI_GENERATION_MODEL = os.getenv("GEMINI_GENERATION_MODEL", "gemini-2.5-flash")
 
 DB_CONNECTION_STR = os.getenv(
     "DB_CONNECTION_STR",
@@ -29,7 +37,7 @@ DB_CONNECTION_STR = os.getenv(
 # FONCTION : LIRE UN FICHIER TXT AVEC ENCODAGE ROBUSTE
 # ------------------------------
 def parse_txt_file(file_path: str) -> List[str]:
-    """Lit un fichier TXT avec gestion robuste des encodages."""
+    """Lit un fichier TXT avec gestion robuste des encodages et extrait les passages."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             text = f.read()
@@ -39,7 +47,7 @@ def parse_txt_file(file_path: str) -> List[str]:
             text = f.read()
     
     lines = text.split("\n")
-    # Utilise strip() pour retirer les espaces et vérifie si la ligne n'est pas vide/un commentaire
+    # Retire le préfixe '    ' (4 espaces) et filtre les lignes vides ou de commentaires (<...)
     passages = [line.removeprefix("    ") for line in lines if line.strip() and not line.startswith("<")]
     return passages
 
@@ -47,34 +55,32 @@ def parse_txt_file(file_path: str) -> List[str]:
 # FONCTION : CALCUL EMBEDDINGS (GEMINI OU FACTICE)
 # ------------------------------
 def calculate_embeddings(text: str) -> List[float]:
-    """Calcule l'embedding via l'API Gemini ou renvoie un embedding factice en cas d'erreur/absence de clé."""
+    """Calcule l'embedding via l'API Gemini (text-embedding-004) ou renvoie un embedding factice."""
     if not GEMINI_API_KEY:
         print(f"[WARNING] GEMINI_API_KEY non définie, utilisation d'embeddings factices ({EMBEDDING_DIMENSION} dim)")
         return np.random.rand(EMBEDDING_DIMENSION).tolist()
     
-    # URL OFFICIELLE pour l'embedding de contenu (vérifiez le modèle utilisé)
+    # URL OFFICIELLE pour l'embedding de contenu
     EMBEDDING_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:embedContent"
 
-    # La clé API est généralement passée en tant que paramètre de requête
+    # La clé API est passée en tant que paramètre de requête
     params = {"key": GEMINI_API_KEY}
     
-    # Structure du corps de la requête pour embedContent
+    # Structure du corps de la requête attendue par 'embedContent'
     data = {
         "content": {"parts": [{"text": text}]},
     }
 
     try:
-        # On utilise 'params' pour la clé, et non 'headers' avec 'Authorization'
         response = requests.post(EMBEDDING_URL, json=data, params=params, timeout=10)
-        response.raise_for_status() # Lève une exception pour les codes d'erreur HTTP 4xx/5xx
+        response.raise_for_status() 
         
         resp_json = response.json()
         
-        # Accès direct à l'embedding (structure standard de l'API Google)
+        # Accès à l'embedding dans la structure de réponse standard
         embedding_values = resp_json.get("embedding", {}).get("values")
         
         if not embedding_values:
-             # Gère le cas où le champ 'values' n'est pas trouvé
             raise ValueError("Champ d'embedding 'values' manquant dans la réponse de l'API.")
 
         return embedding_values
@@ -100,12 +106,14 @@ def save_embedding(corpus: str, conversation_id: int, embedding: List[float], cu
     )
 
 # ------------------------------
-# FONCTION : RECHERCHE TOP-K PASSAGES
+# FONCTION : RECHERCHE TOP-K PASSAGES (RETRIEVAL)
 # ------------------------------
 def similar_corpus(input_text: str, cursor: Cursor, top_k: int = TOP_K) -> List[tuple[int, str]]:
     """Recherche les 'top_k' corpus les plus similaires à 'input_text'."""
+    # 1. Calcul de l'embedding de la requête
     embedding = calculate_embeddings(input_text)
-    # L'opérateur <=> est pour la distance cosinus avec l'extension vector
+    
+    # 2. Recherche par distance cosinus (opérateur <=> de pgvector)
     cursor.execute(
         """
         SELECT id, corpus
@@ -121,18 +129,47 @@ def similar_corpus(input_text: str, cursor: Cursor, top_k: int = TOP_K) -> List[
 # FONCTION : CONSTRUCTION DU PROMPT POUR LE LLM
 # ------------------------------
 def build_prompt(similar_texts: List[tuple[int, str]], question: str) -> str:
-    """Construit le prompt RAG pour le LLM."""
+    """Construit le prompt RAG pour le LLM en utilisant le contexte récupéré."""
+    # Extrait uniquement le texte des tuples (id, texte)
     context = "\n".join([text for _, text in similar_texts])
     prompt = f"Voici le contexte extrait de la base :\n---\n{context}\n---\n\nQuestion : {question}\nRéponse :"
     return prompt
 
 # ------------------------------
-# FONCTION : APPEL AU LLM (SIMULATION)
+# FONCTION : APPEL AU LLM (SIMULATION pour ne pas expirer la clé )
 # ------------------------------
 def call_llm(prompt: str) -> str:
-    """Fonction factice pour simuler l'appel à un LLM externe."""
+    """Fonction factice pour simuler l'appel à un LLM externe (ici, on montre le prompt RAG)."""
     return f"[Réponse générée par le LLM, basée sur le prompt RAG suivant]\n---\n{prompt}\n---"
+# ------------------------------
+# NOUVELLE FONCTION : APPEL AU LLM (RÉEL)
+# ------------------------------
+def generate_response(prompt: str) -> str:
+    """Appelle l'API de génération de Gemini pour obtenir la réponse finale."""
+    if not GEMINI_API_KEY:
+        return "[ERREUR] GEMINI_API_KEY non définie. Impossible d'appeler l'API de génération."
+    
+    GENERATION_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GENERATION_MODEL}:generateContent"
 
+    params = {"key": GEMINI_API_KEY}
+    
+    # Structure de la requête pour generateContent
+    data = {
+        "contents": [{"parts": [{"text": prompt}]}],
+    }
+
+    try:
+        response = requests.post(GENERATION_URL, json=data, params=params, timeout=15)
+        response.raise_for_status()
+        resp_json = response.json()
+        
+        # Extrait le texte généré
+        return resp_json["candidates"][0]["content"]["parts"][0]["text"]
+        
+    except requests.exceptions.RequestException as e:
+        return f"[ERREUR API DE GÉNÉRATION] Réseau ou HTTP: {e}"
+    except Exception as e:
+        return f"[ERREUR] Impossible de traiter la réponse du LLM: {e}"
 # ------------------------------
 # CONNEXION À LA BASE ET INITIALISATION
 # ------------------------------
@@ -140,10 +177,10 @@ print(f"Connexion à la base de données : {DB_CONNECTION_STR}")
 with psycopg.connect(DB_CONNECTION_STR) as conn:
     conn.autocommit = True
     with conn.cursor() as cur:
-        # Activation de l'extension vector
+        # Configuration de la base de données
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         
-        # Création de la table avec la dimension correcte
+        # Création/vérification de la table avec la dimension correcte
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS embeddings_gemini (
                 id SERIAL PRIMARY KEY,
@@ -152,14 +189,20 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
                 embedding VECTOR({EMBEDDING_DIMENSION})
             );
         """)
+        
+        # AJOUT : Purge des anciennes données pour garantir un test propre sur le fichier unique
+        print("Purge des anciennes données d'embeddings...")
+        cur.execute("TRUNCATE TABLE embeddings_gemini RESTART IDENTITY;") # Utilise RESTART IDENTITY pour réinitialiser les ID
 
         # ------------------------------
-        # TRAITEMENT DE TOUS LES FICHIERS TXT
+        # TRAITEMENT DU FICHIER UNIQUE
         # ------------------------------
-        txt_files = glob.glob(os.path.join(TXT_FOLDER_PATH, "*.txt"))
-        print(f"Début du traitement de {len(txt_files)} fichiers...")
         
-        for conv_id, file_path in enumerate(txt_files, start=1):
+        # Utilise le chemin du fichier unique défini plus haut
+        txt_files_to_process = [SINGLE_FILE_PATH] 
+        print(f"Début du traitement de {len(txt_files_to_process)} fichier(s)...")
+
+        for conv_id, file_path in enumerate(txt_files_to_process, start=1):
             try:
                 passages = parse_txt_file(file_path)
                 print(f"|-- Fichier {file_path}: {len(passages)} passages extraits")
@@ -170,7 +213,7 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
                     if len(embedding) == EMBEDDING_DIMENSION:
                         save_embedding(passage, conv_id, embedding, cur)
                     else:
-                        print(f"   [ERREUR] Taille d'embedding incorrecte ({len(embedding)} au lieu de {EMBEDDING_DIMENSION}). Passage ignoré.")
+                        print(f"    [ERREUR] Taille d'embedding incorrecte ({len(embedding)} au lieu de {EMBEDDING_DIMENSION}). Passage ignoré.")
                         
             except Exception as e:
                 print(f"|-- [ERREUR CRITIQUE] Impossible de traiter le fichier {file_path}: {e}")
@@ -182,7 +225,7 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
         print("EXEMPLE DE RECHERCHE RAG")
         print("="*50)
         
-        user_question = "bonjour j'aurais souhaité avoir le secrétariat de carrière juridique s'il vous plait"
+        user_question = "oui bonjour e j'appelle je sais pas si j'appelle au bon endroit e"
         print(f"Question Utilisateur: {user_question}")
         
         top_passages = similar_corpus(user_question, cur)
@@ -193,8 +236,9 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
                 print(f" - '{text[:60]}...'")
             
             prompt = build_prompt(top_passages, user_question)
-            llm_response = call_llm(prompt)
+            llm_response = generate_response(prompt) 
+            #llm_response = call_llm(prompt) 
             print("\nRéponse du Chatbot RAG :")
             print(llm_response)
         else:
-            print("Aucun passage similaire trouvé dans la base de données.")
+            print("Aucun passage similaire trouvé dans la base de données (Vérifiez l'ingestion).")
