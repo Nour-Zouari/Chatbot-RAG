@@ -16,8 +16,8 @@ load_dotenv()
 # ------------------------------
 # CONSTANTES ET VARIABLES D'ENVIRONNEMENT (Inchangées)
 # ------------------------------
-EMBEDDING_DIMENSION = 768 
-TOP_K = 5
+EMBEDDING_DIMENSION = 768 # (768 pour le modèle text-embedding-004)
+TOP_K = 5 # nombre d'embeddings à chercher pour une question donnée
 TXT_FOLDER_PATH = "data/TRANS_TXT" 
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "text-embedding-004") 
@@ -27,7 +27,7 @@ GEMINI_GENERATION_MODEL = os.getenv("GEMINI_GENERATION_MODEL", "gemini-2.5-flash
 DB_CONNECTION_STR = os.getenv(
     "DB_CONNECTION_STR",
     "dbname=chatbot user=postgres password=1234 host=127.0.0.1 port=5433"
-)
+) # les params pour la connexion à la base de données 
 
 # ------------------------------
 # FONCTION UTILITAIRE : VÉRIFIER L'INDEXATION
@@ -38,7 +38,8 @@ def is_corpus_indexed(cursor: Cursor) -> bool:
         # Compte le nombre de lignes dans la table
         cursor.execute("SELECT COUNT(*) FROM embeddings_gemini;")
         count = cursor.fetchone()[0]
-        # On suppose qu'un corpus est indexé s'il y a plus de 81 passages (on a 41 fichiers chacun comportant au moins 2 passages)
+        # On suppose qu'un corpus est indexé s'il y a plus de 81 passages 
+        # (on a 41 fichiers chacun comportant au moins 2 passages)
         return count > 81
     except psycopg.Error as e:
         print(f"[ERREUR DB] Impossible de vérifier l'indexation: {e}")
@@ -54,7 +55,7 @@ def parse_txt_file(file_path: str) -> List[str]:
         with open(file_path, "r", encoding="utf-8") as f:
             text = f.read()
     except UnicodeDecodeError:
-        with open(file_path, "r", encoding="cp1252") as f:
+        with open(file_path, "r", encoding="cp1252") as f: #pour les accents et les caractères spéciaux
             text = f.read()
     
     lines = text.split("\n")
@@ -80,9 +81,9 @@ def calculate_embeddings(text: str) -> List[float]:
         return embedding_values
         
     except requests.exceptions.RequestException as e:
-        print(f"[WARNING] Erreur HTTP ou Réseau lors de l'appel à l'API Gemini ({e}), utilisation d'embedding factice")
+        print(f"[WARNING] Erreur HTTP ou Réseau lors de l'appel à l'API Gemini ({e})")
     except Exception as e:
-        print(f"[WARNING] Erreur de traitement de la réponse de l'API Gemini ou ValueError ({e}), utilisation d'embedding factice")
+        print(f"[WARNING] Erreur de traitement de la réponse de l'API Gemini ou ValueError ({e})")
         
     return np.random.rand(EMBEDDING_DIMENSION).tolist()
 
