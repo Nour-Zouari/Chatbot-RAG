@@ -1,2 +1,3 @@
 Chatbot basé sur RAG simple 
-(à terminer après le projet)
+avec corpus simple de prototypage : conversations entre une hotesse et un client
+le chatbot va répondre à la place de l'hotesse
