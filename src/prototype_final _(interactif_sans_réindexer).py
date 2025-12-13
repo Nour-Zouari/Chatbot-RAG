@@ -168,8 +168,6 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
             print("Corpus déjà indexé. Démarrage rapide du Chatbot.")
         else:
             print("Corpus non indexé ou vidé. Début de l'indexation complète.")
-            # OPTIONNEL : Mettre TRUNCATE ici si vous voulez que la condition soit 'si vide, purger et re-indexer'
-            # cur.execute("TRUNCATE TABLE embeddings_gemini RESTART IDENTITY;") 
             
             print(f"Début du traitement de {num_files} fichier(s)...")
             print("CETTE ÉTAPE PEUT PRENDRE UN CERTAIN TEMPS.")
@@ -177,7 +175,6 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
             for conv_id, file_path in enumerate(txt_files_to_process, start=1):
                 try:
                     passages = parse_txt_file(file_path)
-                    # print(f"|-- Fichier {file_path}: {len(passages)} passages extraits") # Rendre l'affichage moins verbeux
                     
                     for passage in passages:
                         embedding = calculate_embeddings(passage)
@@ -193,7 +190,7 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
 
 
         # ------------------------------
-        # BOUCLE INTERACTIVE DU CHATBOT RAG (Inchangée)
+        # BOUCLE INTERACTIVE DU CHATBOT RAG 
         # ------------------------------
         
         print("\n" + "="*50)
