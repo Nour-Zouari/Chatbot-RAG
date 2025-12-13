@@ -74,10 +74,10 @@ def similar_corpus(input_corpus: str, cursor: Cursor) -> list[tuple[int, str]]:
 with psycopg.connect(db_connection_str) as conn:
     conn.autocommit = True
     with conn.cursor() as cur:
-        # Supprime la table si elle existe
+        # au cas ou j'ai lancé le script plusieurs fois et embeddings existe déjà
         cur.execute("DROP TABLE IF EXISTS embeddings;")
         
-        # Installer l'extension pgvector si absente
+        # j'ai ajouté IF NOT EXIST au cas ou je vais relancer le script plusieurs fois
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         
         # Créer la table embeddings avec type VECTOR
