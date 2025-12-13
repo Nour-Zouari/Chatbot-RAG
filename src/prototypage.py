@@ -24,11 +24,10 @@ TOP_K = 5  # nombre de passages récupérés
 def parse_txt_file(file_path: str) -> list[str]:
     """
     Lit un fichier txt et renvoie une liste de passages.
-    Ignore les lignes commençant par '<' et supprime les espaces initiaux.
     """
     with open(file_path, "r", encoding="utf-8") as f:
         lines = f.read().split("\n")
-        passages = [line.removeprefix("     ") for line in lines if line.strip() and not line.startswith("<")]
+        passages = [line.removeprefix("     ") for line in lines if line.strip() ]
     return passages
 
 # ------------------------------
@@ -119,7 +118,7 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
         # ------------------------------
         # TRAITEMENT DE TOUS LES FICHIERS TXT DANS UN DOSSIER
         # ------------------------------
-        txt_files = glob.glob("chemin/vers/fichiers/*.txt")  # dossier contenant tous les fichiers
+        txt_files = glob.glob("data/TRANS_TXT/*.txt")  # dossier contenant tous les fichiers
         for conv_id, file_path in enumerate(txt_files, start=1):
             passages = parse_txt_file(file_path)
             for passage in passages:
