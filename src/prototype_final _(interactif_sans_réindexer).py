@@ -38,21 +38,18 @@ def is_corpus_indexed(cursor: Cursor) -> bool:
         # Compte le nombre de lignes dans la table
         cursor.execute("SELECT COUNT(*) FROM embeddings_gemini;")
         count = cursor.fetchone()[0]
-        # On suppose qu'un corpus est indexé s'il y a plus de 10 passages (on a 41 fichiers chacun comportant au moins 2 passages)
-        return count > 82
+        # On suppose qu'un corpus est indexé s'il y a plus de 81 passages (on a 41 fichiers chacun comportant au moins 2 passages)
+        return count > 81
     except psycopg.Error as e:
         print(f"[ERREUR DB] Impossible de vérifier l'indexation: {e}")
         # En cas d'erreur (ex: table non créée), on renvoie False pour forcer l'ingestion.
         return False
 
 # ------------------------------
-# FONCTIONS RAG (Inchangées)
+# FONCTIONS RAG 
 # ------------------------------
-# Ces fonctions restent les mêmes : parse_txt_file, calculate_embeddings, 
-# save_embedding, similar_corpus, build_prompt, generate_response.
 
 def parse_txt_file(file_path: str) -> List[str]:
-    # ... (Votre implémentation de parse_txt_file) ...
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             text = f.read()
@@ -61,11 +58,10 @@ def parse_txt_file(file_path: str) -> List[str]:
             text = f.read()
     
     lines = text.split("\n")
-    passages = [line.removeprefix("    ") for line in lines if line.strip() and not line.startswith("<")]
+    passages = [line.removeprefix("    ") for line in lines if line.strip() and not line.startswith("<")] 
     return passages
 
 def calculate_embeddings(text: str) -> List[float]:
-    # ... (Votre implémentation de calculate_embeddings) ...
     if not GEMINI_API_KEY:
         print(f"[WARNING] GEMINI_API_KEY non définie, utilisation d'embeddings factices ({EMBEDDING_DIMENSION} dim)")
         return np.random.rand(EMBEDDING_DIMENSION).tolist()
@@ -92,7 +88,6 @@ def calculate_embeddings(text: str) -> List[float]:
 
 
 def save_embedding(corpus: str, conversation_id: int, embedding: List[float], cursor: Cursor) -> None:
-    # ... (Votre implémentation de save_embedding) ...
     cursor.execute(
         """
         INSERT INTO embeddings_gemini (conversation_id, corpus, embedding)
@@ -102,7 +97,6 @@ def save_embedding(corpus: str, conversation_id: int, embedding: List[float], cu
     )
 
 def similar_corpus(input_text: str, cursor: Cursor, top_k: int = TOP_K) -> List[tuple[int, str]]:
-    # ... (Votre implémentation de similar_corpus) ...
     embedding = calculate_embeddings(input_text)
     cursor.execute(
         """
@@ -117,14 +111,12 @@ def similar_corpus(input_text: str, cursor: Cursor, top_k: int = TOP_K) -> List[
 
 
 def build_prompt(similar_texts: List[tuple[int, str]], question: str) -> str:
-    # ... (Votre implémentation de build_prompt) ...
     context = "\n".join([text for _, text in similar_texts])
     prompt = f"Voici les conversations similaires trouvées dans la base :\n---\n{context}\n---\n\n Répond à cette question en se basant sur les anciennes réponses de l'hotesse (comme si c'est l'hotesse qui répond) \n Question : {question}\nRéponse :"
     return prompt
 
 
 def generate_response(prompt: str) -> str:
-    # ... (Votre implémentation de generate_response) ...
     if not GEMINI_API_KEY:
         return "[ERREUR] GEMINI_API_KEY non définie. Impossible d'appeler l'API de génération."
     
@@ -245,4 +237,4 @@ with psycopg.connect(DB_CONNECTION_STR) as conn:
                 
             else:
                 print("\n[CHATBOT] :")
-                print("Désolé, je n'ai trouvé aucune information pertinente dans ma base de données pour répondre à cette question.")
+                print("je n'ai trouvé aucune information pertinente dans ma base de données pour répondre à cette question.")
